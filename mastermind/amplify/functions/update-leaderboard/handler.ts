@@ -1,6 +1,6 @@
 import { DynamoDBStreamHandler } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
 
 const client = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(client);
@@ -16,119 +16,114 @@ interface LeaderboardEntry {
   username?: string;
 }
 
-async function publishToAppSyncEvents(entry: LeaderboardEntry): Promise<void> {
-  const endpoint = process.env.APPSYNC_EVENTS_ENDPOINT;
-  const apiKey = process.env.APPSYNC_EVENTS_API_KEY;
-
-  if (!endpoint || !apiKey) {
-    console.log('AppSync Events not configured, skipping publication');
+async function publishToAppSyncEvents(updatedEntry: LeaderboardEntry) {
+  const eventsEndpoint = process.env.APPSYNC_EVENTS_ENDPOINT;
+  const eventsApiKey = process.env.APPSYNC_EVENTS_API_KEY;
+  
+  if (!eventsEndpoint || !eventsApiKey) {
+    console.log('AppSync Events not configured, skipping publish');
     return;
   }
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetch(eventsEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
+        'x-api-key': eventsApiKey,
       },
       body: JSON.stringify({
-        channel: `/leaderboard/${entry.difficulty}`,
-        events: [entry],
+        channel: `/leaderboard/${updatedEntry.difficulty}`,
+        events: [JSON.stringify(updatedEntry)]
       }),
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      console.error('Failed to publish to AppSync Events:', response.status, await response.text());
+    } else {
+      console.log('Successfully published leaderboard update to AppSync Events');
     }
-
-    console.log(`Published leaderboard update for ${entry.userId} in ${entry.difficulty}`);
   } catch (error) {
-    console.error('Failed to publish to AppSync Events:', error);
+    console.error('Error publishing to AppSync Events:', error);
   }
 }
 
 export const handler: DynamoDBStreamHandler = async (event) => {
-  console.log('Processing DynamoDB stream events:', JSON.stringify(event, null, 2));
+  console.log('Processing DynamoDB stream event:', JSON.stringify(event, null, 2));
 
   for (const record of event.Records) {
-    if (record.eventName !== 'MODIFY') continue;
+    if (record.eventName === 'MODIFY' && record.dynamodb?.NewImage) {
+      const newImage = record.dynamodb.NewImage;
+      
+      // Check if the game was just completed (status changed to 'won')
+      const status = newImage.gameStatus?.S;
+      const userId = newImage.userId?.S;
+      const username = newImage.username?.S;
+      const difficulty = newImage.difficulty?.S;
+      const totalGuesses = newImage.totalGuesses?.N;
+      
+      if (status === 'won' && userId && difficulty && totalGuesses) {
+        console.log(`Game won by user ${userId} in ${totalGuesses} guesses on ${difficulty} difficulty`);
+        
+        try {
+          // Get current leaderboard entry
+          const getResult = await docClient.send(new GetCommand({
+            TableName: process.env.LEADERBOARD_TABLE_NAME,
+            Key: { userId, difficulty },
+          }));
 
-    const newImage = record.dynamodb?.NewImage;
-    const oldImage = record.dynamodb?.OldImage;
+          const currentEntry = getResult.Item as LeaderboardEntry | undefined;
+          const score = parseInt(totalGuesses);
+          const now = new Date().toISOString();
 
-    if (!newImage || !oldImage) continue;
+          let updatedEntry: LeaderboardEntry;
 
-    const newStatus = newImage.gameStatus?.S;
-    const oldStatus = oldImage.gameStatus?.S;
+          if (currentEntry) {
+            // Update existing entry
+            const newTotalGames = currentEntry.totalGames + 1;
+            const newGamesWon = currentEntry.gamesWon + 1;
+            const newBestScore = Math.min(currentEntry.bestScore, score);
+            const newAverageScore = Math.round(
+              ((currentEntry.averageScore * currentEntry.gamesWon) + score) / newGamesWon
+            );
 
-    if (newStatus !== 'won' || oldStatus === 'won') continue;
+            updatedEntry = {
+              ...currentEntry,
+              gamesWon: newGamesWon,
+              totalGames: newTotalGames,
+              bestScore: newBestScore,
+              averageScore: newAverageScore,
+              lastWonAt: now,
+            };
+          } else {
+            // Create new entry
+            updatedEntry = {
+              userId,
+              username,
+              difficulty,
+              gamesWon: 1,
+              totalGames: 1,
+              bestScore: score,
+              averageScore: score,
+              lastWonAt: now,
+            };
+          }
 
-    const userId = newImage.userId?.S;
-    const username = newImage.username?.S;
-    const difficulty = newImage.difficulty?.S;
-    const totalGuesses = newImage.totalGuesses?.N;
+          // Save updated entry
+          await docClient.send(new PutCommand({
+            TableName: process.env.LEADERBOARD_TABLE_NAME,
+            Item: updatedEntry,
+          }));
 
-    if (!userId || !difficulty || !totalGuesses) {
-      console.error('Missing required fields in stream record');
-      continue;
-    }
+          console.log(`Updated leaderboard for user ${userId}:`, updatedEntry);
 
-    const score = parseInt(totalGuesses);
+          // Publish update to AppSync Events
+          await publishToAppSyncEvents(updatedEntry);
 
-    try {
-      const getCommand = new GetCommand({
-        TableName: process.env.LEADERBOARD_TABLE_NAME,
-        Key: { userId, difficulty },
-      });
-
-      const { Item: existingEntry } = await docClient.send(getCommand);
-
-      let updatedEntry: LeaderboardEntry;
-
-      if (existingEntry) {
-        const newGamesWon = existingEntry.gamesWon + 1;
-        const newTotalGames = existingEntry.totalGames + 1;
-        const newBestScore = Math.min(existingEntry.bestScore, score);
-        const newAverageScore = Math.round(
-          ((existingEntry.averageScore * existingEntry.gamesWon) + score) / newGamesWon
-        );
-
-        updatedEntry = {
-          ...existingEntry,
-          gamesWon: newGamesWon,
-          totalGames: newTotalGames,
-          bestScore: newBestScore,
-          averageScore: newAverageScore,
-          lastWonAt: new Date().toISOString(),
-          username,
-        };
-      } else {
-        updatedEntry = {
-          userId,
-          difficulty,
-          gamesWon: 1,
-          totalGames: 1,
-          bestScore: score,
-          averageScore: score,
-          lastWonAt: new Date().toISOString(),
-          username,
-        };
+        } catch (error) {
+          console.error('Error updating leaderboard:', error);
+        }
       }
-
-      const putCommand = new PutCommand({
-        TableName: process.env.LEADERBOARD_TABLE_NAME,
-        Item: updatedEntry,
-      });
-
-      await docClient.send(putCommand);
-
-      console.log(`Updated leaderboard for ${userId} in ${difficulty}: ${updatedEntry.gamesWon} wins`);
-
-      await publishToAppSyncEvents(updatedEntry);
-
-    } catch (error) {
-      console.error(`Failed to update leaderboard for ${userId}:`, error);
     }
   }
 };
