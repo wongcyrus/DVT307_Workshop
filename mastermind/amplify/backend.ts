@@ -27,6 +27,7 @@ const sharedStack = backend.gameManagement.stack;
 const ddbConstruct = new DynamoDBConstruct(sharedStack, `MastermindDynamoDB-${environment}`, {
   environment: environment
 });
+
 // Add table names as environment variables to AWS Lambda functions
 backend.gameManagement.addEnvironment('GAMES_TABLE_NAME', ddbConstruct.gamesTable.tableName);
 backend.validateGuess.addEnvironment('GAMES_TABLE_NAME', ddbConstruct.gamesTable.tableName);
@@ -59,7 +60,6 @@ const restApiConstruct = new RestApiConstruct(sharedStack, `MastermindRestApi-${
   leaderboardTable: ddbConstruct.leaderboardTable
 });
 
-
 // Define Event API construct
 const eventApiConstruct = new AppSyncEventsConstruct(sharedStack, `MastermindEventApi-${environment}`, {
   environment: environment,
@@ -70,7 +70,6 @@ const eventApiConstruct = new AppSyncEventsConstruct(sharedStack, `MastermindEve
 // Add AppSync Events endpoint & API Key to update-leaderboard function
 backend.updateLeaderboard.addEnvironment('APPSYNC_EVENTS_ENDPOINT', `https://${eventApiConstruct.eventApi.httpDns}/event`);
 backend.updateLeaderboard.addEnvironment('APPSYNC_EVENTS_API_KEY', eventApiConstruct.eventApi.apiKeys['Default'].attrApiKey);
-
 
 // add outputs to the configuration file
 backend.addOutput({
