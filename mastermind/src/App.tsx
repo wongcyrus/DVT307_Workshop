@@ -15,6 +15,10 @@ const amplifyConfig = parseAmplifyConfig(outputs);
 
 Amplify.configure({
   ...amplifyConfig,
+  API: {
+    ...amplifyConfig.API,
+    REST: outputs.custom.API,
+  },
 });
 
 function App() {
@@ -39,7 +43,7 @@ function App() {
           </Router>
         </GameProvider>
       </Authenticator.Provider>
-    </Authenticator>
+   </Authenticator>
   );
 }
 
