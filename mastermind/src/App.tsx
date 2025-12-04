@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { Authenticator } from '@aws-amplify/ui-react';
 import { GameProvider } from './context/GameContext';
 import { Navigation } from './components/Navigation';
 import EntryScreen from './screens/EntryScreen/EntryScreen';
@@ -11,6 +12,8 @@ function App() {
   const baseURL = import.meta.env.MODE === 'production' ? '/' : `/ports/8081${import.meta.env.BASE_URL}`;
 
   return (
+    <Authenticator.Provider>
+      <Authenticator>
         <GameProvider>
           <Router basename={baseURL}>
             <div className="min-h-screen bg-gray-50">
@@ -26,6 +29,8 @@ function App() {
             </div>
           </Router>
         </GameProvider>
+      </Authenticator>
+    </Authenticator.Provider>
   );
 }
 
