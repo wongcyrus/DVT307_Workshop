@@ -1,5 +1,4 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { Authenticator } from '@aws-amplify/ui-react';
 import { GameProvider } from './context/GameContext';
 import { Navigation } from './components/Navigation';
 import EntryScreen from './screens/EntryScreen/EntryScreen';
@@ -7,13 +6,23 @@ import LeaderboardScreen from './screens/LeaderboardScreen/LeaderboardScreen';
 import GameScreen from './screens/GameScreen/GameScreen';
 import GameListScreen from './screens/GameListScreen/GameListScreen';
 import '@aws-amplify/ui-react/styles.css';
+import { Authenticator } from '@aws-amplify/ui-react';
+import { Amplify } from 'aws-amplify';
+import { parseAmplifyConfig } from "aws-amplify/utils";
+import outputs from '../amplify_outputs.json';
+
+const amplifyConfig = parseAmplifyConfig(outputs);
+
+Amplify.configure({
+  ...amplifyConfig,
+});
 
 function App() {
   const baseURL = import.meta.env.MODE === 'production' ? '/' : `/ports/8081${import.meta.env.BASE_URL}`;
 
   return (
-    <Authenticator.Provider>
-      <Authenticator>
+    <Authenticator>
+      <Authenticator.Provider>
         <GameProvider>
           <Router basename={baseURL}>
             <div className="min-h-screen bg-gray-50">
@@ -29,8 +38,8 @@ function App() {
             </div>
           </Router>
         </GameProvider>
-      </Authenticator>
-    </Authenticator.Provider>
+      </Authenticator.Provider>
+    </Authenticator>
   );
 }
 
